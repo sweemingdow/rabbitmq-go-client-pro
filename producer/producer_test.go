@@ -18,10 +18,10 @@ import (
 )
 
 var cfgExample = `
-addresses: 192.168.10.100:5672 # if cluster, eg: 192.168.10.10:5672,192.168.11.100:5672,192.168.12.100:5672
+addresses: 127.0.0.1:5672 # if cluster, eg: 192.168.10.100:5672,192.168.11.100:5672,192.168.12.100:5672
 virtual-host: '/'
-username: mgr
-password: mgr123
+username: {your-username}
+password: {your-pwd}
 log-level: trace
 producer-cfg:
   conn-retry-delay-mills: 10    
@@ -127,7 +127,6 @@ func TestProducerBaseUsed(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		/*
 			The caller specifies the msgId and timeout period.
-			The msgId is used to associate the business.
 			The msgId will be passed in confirmCallback.
 		*/
 		err = WithConfirm(

@@ -30,12 +30,11 @@ var (
 )
 
 var (
-	once       sync.Once
-	initErr    error
-	pCli       *ProducerClient
-	confirmCb  ConfirmCallback
-	returnCb   ReturnCallback
-	msgCreator MsgIdCreator
+	once      sync.Once
+	initErr   error
+	pCli      *ProducerClient
+	confirmCb ConfirmCallback
+	returnCb  ReturnCallback
 )
 
 func MustGetProducerClient() *ProducerClient {
@@ -781,9 +780,6 @@ const (
 type UseFunc func(ch *amqp091.Channel) error
 
 type ConfirmFunc func(msgId string, ch *amqp091.Channel) error
-
-// default uuid, may took: 200-300ns
-type MsgIdCreator func() string
 
 // need a msgId to relation the msg
 // only deliverTag nothing to do ...

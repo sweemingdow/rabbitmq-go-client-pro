@@ -20,8 +20,8 @@ import (
 var cfgExample = `
 addresses: 192.168.10.100:5672 # if cluster, eg: 192.168.10.10:5672,192.168.11.100:5672,192.168.12.100:5672
 virtual-host: '/'
-username: mgr
-password: mgr123
+username: {your-username}
+password: {your-pwd}
 log-level: debug
 producer-cfg:
   conn-retry-delay-mills: 10    
@@ -66,7 +66,7 @@ func setup() {
 
 	rmCfg = cfg
 
-	zl := zerolog.New(os.Stdout).With().Str("marker", "mqLogger").Logger()
+	zl := zerolog.New(os.Stdout).With().Timestamp().Str("marker", "mqLogger").Logger()
 	zmq := zeroMqLogger{
 		zl: zl,
 	}
@@ -146,6 +146,10 @@ func teardown() {
 	}
 }
 
+func init() {
+	zerolog.TimeFieldFormat = "2006-01-02 15:04:05.000"
+}
+
 // for example customise mq logger with zeroLog, I love it so much
 type zeroMqLogger struct {
 	zl zerolog.Logger
@@ -169,7 +173,7 @@ func (zmq zeroMqLogger) MqLog(ll rm_log.LogLevel, content string) {
 }
 
 var (
-	root = zerolog.New(os.Stdout)
+	root = zerolog.New(os.Stdout).With().Timestamp().Logger()
 	pLog = root.With().Str("marker", "producer").Logger()
 	cLog = root.With().Str("marker", "consumer").Logger()
 )
@@ -182,12 +186,16 @@ var returnCallback = func(ret amqp091.Return) {
 	pLog.Error().Msgf("receive return callback, msgId:%s, exchange:%s, routingKey:%s, msgBody:%s", ret.MessageId, ret.Exchange, ret.RoutingKey, string(ret.Body))
 }
 
+/*
+note:
+!!! To execute this test function, please ensure that the queue:queue.test.event is empty, otherwise "var cWg sync.WaitGroup" will panic
+*/
 func TestUseTogether(t *testing.T) {
 	rm_producer.SetConfirmCallback(confirmCallback)
 	rm_producer.SetReturnCallback(returnCallback)
 
 	var (
-		sendCnt = 100
+		sendCnt = 20
 		wg      sync.WaitGroup
 	)
 
