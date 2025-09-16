@@ -43,8 +43,10 @@ Fed up with bandaids, I built go-rabbitmq-client-pro — a framework that actual
   - Throughput Impact: ~43% reduction with Confirm mode
   - Stability: Zero connection recreations under all load conditions.
 
+8M Unconfirmed Mode
 ![8M-Unconfirm-Mode](https://github.com/sweemingdow/rabbitmq-go-client-pro/blob/main/assets/images/8M-unconfirmed.png)
 
+8M Confirmed Mode
 ![8M-Confirm-Mode](https://github.com/sweemingdow/rabbitmq-go-client-pro/blob/main/assets/images/8M-confirmed.png)
 
 #### Quick Start
