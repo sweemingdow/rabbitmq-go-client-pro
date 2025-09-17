@@ -18,7 +18,7 @@ import (
 )
 
 var cfgExample = `
-addresses: 127.0.0.1:5672 # if cluster, eg: 192.168.10.100:5672,192.168.11.100:5672,192.168.12.100:5672
+addresses: 192.168.10.100:5672 # if cluster, eg: 192.168.10.100:5672,192.168.11.100:5672,192.168.12.100:5672
 virtual-host: '/'
 username: {your-username}
 password: {your-pwd}
@@ -77,7 +77,7 @@ func teardown() {
 
 func TestProducerBaseUsed(t *testing.T) {
 	// with default 4 seconds timeout
-	err := WithDefaultUse(
+	err := pc.WithDefaultUse(
 		func(ch *amqp091.Channel) error {
 			// be transparent to callers
 			return ch.Publish(
@@ -97,7 +97,7 @@ func TestProducerBaseUsed(t *testing.T) {
 	}
 
 	// or customize the timeout
-	err = WithUse(
+	err = pc.WithUse(
 		1*time.Second,
 		func(ch *amqp091.Channel) error {
 			// be transparent to callers
@@ -129,7 +129,7 @@ func TestProducerBaseUsed(t *testing.T) {
 			The caller specifies the msgId and timeout period.
 			The msgId will be passed in confirmCallback.
 		*/
-		err = WithConfirm(
+		err = pc.WithConfirm(
 			uuid.New().String(),
 			8*time.Second,
 			func(msgId string, ch *amqp091.Channel) error {
@@ -152,7 +152,7 @@ func TestProducerBaseUsed(t *testing.T) {
 		}
 
 		// with default 4 seconds timeout
-		err = WithConfirmDefault(
+		err = pc.WithConfirmDefault(
 			uuid.New().String(),
 			func(msgId string, ch *amqp091.Channel) error {
 				return ch.Publish(
@@ -174,7 +174,7 @@ func TestProducerBaseUsed(t *testing.T) {
 		}
 
 		// don't care detail, just confirm
-		err = JustConfirm(
+		err = pc.JustConfirm(
 			// default generate msgId in JustConfirm
 			func(msgId string, ch *amqp091.Channel) error {
 				return ch.Publish(
@@ -225,7 +225,7 @@ func TestProducerAutoReconnect(t *testing.T) {
 	go func() {
 		for {
 			time.Sleep(time.Duration(rand.Intn(800-100+1)+100) * time.Millisecond)
-			e := WithUse(
+			e := pc.WithUse(
 				4*time.Second,
 				func(ch *amqp091.Channel) error {
 					return ch.Publish(
@@ -270,7 +270,7 @@ func TestNewProducerReturn(t *testing.T) {
 		log.Printf("ret:%v had be returned\n", ret)
 	})
 
-	e := JustConfirm(
+	e := pc.JustConfirm(
 		func(msgId string, ch *amqp091.Channel) error {
 			return ch.Publish(
 				"direct.test.event",
@@ -309,7 +309,7 @@ func TestProducerNormalModeConcurrencyPublish(t *testing.T) {
 
 	for i := 0; i < sendMsgCnt; i++ {
 		grp.Go(func() error {
-			e := WithUse(
+			e := pc.WithUse(
 				4*time.Second,
 				func(ch *amqp091.Channel) error {
 					return ch.Publish(
@@ -339,9 +339,9 @@ func TestProducerNormalModeConcurrencyPublish(t *testing.T) {
 	chCnt := rmCfg.ProducerCfg.MaxConnections * rmCfg.ProducerCfg.MaxChannelsPerConn
 
 	log.Printf("send %d messages with %d connections and %d channels in %d concurrency, took:%v", sendMsgCnt, rmCfg.ProducerCfg.MaxConnections, chCnt, sendConcurrency, time.Since(ss))
-	log.Println(StatsInfo())
+	log.Println(pc.StatsInfo())
 
-	ResetStatsInfo()
+	pc.ResetStatsInfo()
 }
 
 /*
@@ -369,7 +369,7 @@ func TestProducerConfirmModeConcurrencyPublish(t *testing.T) {
 
 	for i := 0; i < sendMsgCnt; i++ {
 		grp.Go(func() error {
-			e := WithConfirm(
+			e := pc.WithConfirm(
 				uuid.New().String(),
 				8*time.Second,
 				func(msgId string, ch *amqp091.Channel) error {
@@ -402,9 +402,9 @@ func TestProducerConfirmModeConcurrencyPublish(t *testing.T) {
 	chCnt := rmCfg.ProducerCfg.MaxConnections * rmCfg.ProducerCfg.MaxChannelsPerConn
 
 	log.Printf("send %d messages with %d connections and %d channels in %d concurrency, took:%v", sendMsgCnt, rmCfg.ProducerCfg.MaxConnections, chCnt, sendConcurrency, time.Since(ss))
-	log.Println(StatsInfo())
+	log.Println(pc.StatsInfo())
 
-	ResetStatsInfo()
+	pc.ResetStatsInfo()
 
 	// until all confirm done
 	wg.Wait()

@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-var (
+type statsMetrics struct {
 	enableStats               bool
 	acquireChTotalTook        atomic.Uint64
 	acquireChMinTook          atomic.Uint32
@@ -20,71 +20,75 @@ var (
 	putChTotalTimes           atomic.Uint64
 	recreateChCntAfterWaiting atomic.Uint32
 	mu                        sync.Mutex
-)
+}
 
-func init() {
-	acquireChMinTook.Store(^uint32(0))
-	acquireChMaxTook.Store(0)
-	putChMinTook.Store(^uint32(0))
-	putChMaxTook.Store(0)
+var smp = newStatsMetrics()
+
+func newStatsMetrics() *statsMetrics {
+	sm := &statsMetrics{}
+	sm.acquireChMinTook.Store(^uint32(0))
+	sm.acquireChMaxTook.Store(0)
+	sm.putChMinTook.Store(^uint32(0))
+	sm.putChMaxTook.Store(0)
+	return sm
 }
 
 func setEnableStats(enable bool) {
-	enableStats = enable
+	smp.enableStats = enable
 }
 
-func updateAcquireStatsState(took time.Duration) {
+func (sm *statsMetrics) updateAcquireStatsState(took time.Duration) {
 	tookUs := uint32(took.Microseconds())
-	acquireChTotalTimes.Add(1)
-	acquireChTotalTook.Add(uint64(tookUs))
-	rm_utils.CASUpdateUi32Min(&acquireChMinTook, tookUs)
-	rm_utils.CASUpdateUi32Max(&acquireChMaxTook, tookUs)
+	sm.acquireChTotalTimes.Add(1)
+	sm.acquireChTotalTook.Add(uint64(tookUs))
+	rm_utils.CASUpdateUi32Min(&sm.acquireChMinTook, tookUs)
+	rm_utils.CASUpdateUi32Max(&sm.acquireChMaxTook, tookUs)
 }
 
-func updatePutStatsState(took time.Duration) {
+func (sm *statsMetrics) updatePutStatsState(took time.Duration) {
 	tookUs := uint32(took.Microseconds())
-	putChTotalTimes.Add(1)
-	putChTotalTook.Add(uint64(tookUs))
-	rm_utils.CASUpdateUi32Min(&putChMinTook, tookUs)
-	rm_utils.CASUpdateUi32Max(&putChMaxTook, tookUs)
+	sm.putChTotalTimes.Add(1)
+	sm.putChTotalTook.Add(uint64(tookUs))
+	rm_utils.CASUpdateUi32Min(&sm.putChMinTook, tookUs)
+	rm_utils.CASUpdateUi32Max(&sm.putChMaxTook, tookUs)
 }
 
-func StatsInfo() string {
-	acquireTotalTook := acquireChTotalTook.Load()
-	acquireTotalTimes := acquireChTotalTimes.Load()
+func (pc *ProducerClient) StatsInfo() string {
+	acquireTotalTook := smp.acquireChTotalTook.Load()
+	acquireTotalTimes := smp.acquireChTotalTimes.Load()
 	acquireAvgTime := acquireTotalTook / acquireTotalTimes
 
-	putTotalTook := putChTotalTook.Load()
-	putTotalTimes := putChTotalTimes.Load()
+	putTotalTook := smp.putChTotalTook.Load()
+	putTotalTimes := smp.putChTotalTimes.Load()
 	putAvgTime := putTotalTook / putTotalTimes
 
 	return fmt.Sprintf("producer pool stats info, enableConfirm:%t, enableMandatory:%t, acquire[totalTook=%dus, totalTimes=%d, avg=%dus, minTook=%dus, maxTook=%dus], put:[totalTook=%dus, totalTimes=%d, avg=%dus, minTook=%dus, maxTook=%dus], recreate:[recreateCnt=%d]",
-		pCli.enableConfirm,
-		pCli.enableMandatory,
+		pc.enableConfirm,
+		pc.enableMandatory,
 		acquireTotalTook,
 		acquireTotalTimes,
 		acquireAvgTime,
-		acquireChMinTook.Load(),
-		acquireChMaxTook.Load(),
+		smp.acquireChMinTook.Load(),
+		smp.acquireChMaxTook.Load(),
 		putTotalTook,
 		putTotalTimes,
 		putAvgTime,
-		putChMinTook.Load(),
-		putChMaxTook.Load(),
-		recreateChCntAfterWaiting.Load(),
+		smp.putChMinTook.Load(),
+		smp.putChMaxTook.Load(),
+		smp.recreateChCntAfterWaiting.Load(),
 	)
 }
 
-func ResetStatsInfo() {
-	mu.Lock()
-	acquireChMinTook.Store(^uint32(0))
-	acquireChMaxTook.Store(0)
-	acquireChTotalTook.Store(0)
-	acquireChTotalTimes.Store(0)
-	putChMinTook.Store(^uint32(0))
-	putChMaxTook.Store(0)
-	putChTotalTook.Store(0)
-	putChTotalTimes.Store(0)
-	recreateChCntAfterWaiting.Store(0)
-	mu.Unlock()
+func (pc *ProducerClient) ResetStatsInfo() {
+	smp.mu.Lock()
+	smp.acquireChMinTook.Store(^uint32(0))
+	smp.acquireChMaxTook.Store(0)
+	smp.acquireChTotalTook.Store(0)
+	smp.acquireChTotalTimes.Store(0)
+	smp.putChMinTook.Store(^uint32(0))
+	smp.putChMaxTook.Store(0)
+	smp.putChTotalTook.Store(0)
+	smp.putChTotalTimes.Store(0)
+	smp.recreateChCntAfterWaiting.Store(0)
+	smp.mu.Unlock()
 }

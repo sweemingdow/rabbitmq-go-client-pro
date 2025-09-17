@@ -30,20 +30,9 @@ var (
 )
 
 var (
-	once      sync.Once
-	initErr   error
-	pCli      *ProducerClient
 	confirmCb ConfirmCallback
 	returnCb  ReturnCallback
 )
-
-func MustGetProducerClient() *ProducerClient {
-	if pCli == nil {
-		rm_log.Fatal("producer client is nil")
-	}
-
-	return pCli
-}
 
 type producerConn struct {
 	id      string // eg: p-conn-{no.}
@@ -93,41 +82,36 @@ func NewProducerClient(cfg rm_cfg.RabbitmqCfg) (*ProducerClient, error) {
 		rm_log.Fatal(fmt.Sprintf("max channels is invalid"))
 	}
 
-	once.Do(func() {
-		cli := &ProducerClient{
-			cfg:             cfg,
-			connsLen:        uint64(cfg.ProducerCfg.MaxConnections),
-			timerPool:       rm_utils.NewTimerPool(),
-			done:            make(chan struct{}),
-			enableConfirm:   cfg.ProducerCfg.EnableConfirm,
-			enableMandatory: cfg.ProducerCfg.EnableMandatory,
-		}
+	cli := &ProducerClient{
+		cfg:             cfg,
+		connsLen:        uint64(cfg.ProducerCfg.MaxConnections),
+		timerPool:       rm_utils.NewTimerPool(),
+		done:            make(chan struct{}),
+		enableConfirm:   cfg.ProducerCfg.EnableConfirm,
+		enableMandatory: cfg.ProducerCfg.EnableMandatory,
+	}
 
-		conns, err := cli.mustInitConns()
-		if err != nil {
-			initErr = err
-			return
-		}
+	conns, err := cli.mustInitConns()
+	if err != nil {
+		return nil, err
+	}
 
-		cli.conns = conns
-		cli.enableConfirm = cfg.ProducerCfg.EnableConfirm
-		if cfg.ProducerCfg.EnableConfirm {
-			cli.deliverId2msgId = haxmap.New[string, string](100)
-		}
-		cli.enableMandatory = cfg.ProducerCfg.EnableMandatory
+	cli.conns = conns
+	cli.enableConfirm = cfg.ProducerCfg.EnableConfirm
+	if cfg.ProducerCfg.EnableConfirm {
+		cli.deliverId2msgId = haxmap.New[string, string](100)
+	}
+	cli.enableMandatory = cfg.ProducerCfg.EnableMandatory
 
-		setEnableStats(cfg.ProducerCfg.EnableStats)
+	setEnableStats(cfg.ProducerCfg.EnableStats)
 
-		if rm_log.CanDebug() {
-			rm_log.Debug("rabbitmq producer client init successfully")
-		}
+	if rm_log.CanDebug() {
+		rm_log.Debug("rabbitmq producer client init successfully")
+	}
 
-		rm_log.SetLoggerLevelHuman(cfg.LogLevel)
+	rm_log.SetLoggerLevelHuman(cfg.LogLevel)
 
-		pCli = cli
-	})
-
-	return pCli, initErr
+	return cli, nil
 }
 
 func (pc *ProducerClient) mustInitConns() (conns []*producerConn, err error) {
@@ -671,8 +655,8 @@ func (cn *producerConn) acquireChan(timeout time.Duration) (*ProducerChan, error
 					return nil, err
 				}
 
-				if enableStats {
-					recreateChCntAfterWaiting.Add(1)
+				if smp.enableStats {
+					smp.recreateChCntAfterWaiting.Add(1)
 				}
 
 				if rm_log.CanTrace() {
@@ -788,7 +772,7 @@ type ConfirmCallback func(msgId string, deliverTag uint64, isAck bool)
 type ReturnCallback func(ret amqp091.Return)
 
 func (pc *ProducerClient) withChannel(timeout time.Duration, run func(ch *ProducerChan) error) error {
-	if enableStats {
+	if smp.enableStats {
 		start := time.Now()
 		rabbitCh, err := pc.GetProduceCh(timeout)
 		if err != nil {
@@ -798,10 +782,10 @@ func (pc *ProducerClient) withChannel(timeout time.Duration, run func(ch *Produc
 		defer func() {
 			putStart := time.Now()
 			pc.PutProduceCh(rabbitCh)
-			updatePutStatsState(time.Since(putStart))
+			smp.updatePutStatsState(time.Since(putStart))
 		}()
 
-		updateAcquireStatsState(time.Since(start))
+		smp.updateAcquireStatsState(time.Since(start))
 
 		return run(rabbitCh)
 	} else {
@@ -816,20 +800,17 @@ func (pc *ProducerClient) withChannel(timeout time.Duration, run func(ch *Produc
 	}
 }
 
-func WithUse(timeout time.Duration, uf UseFunc) error {
-	pc := MustGetProducerClient()
-
+func (pc *ProducerClient) WithUse(timeout time.Duration, uf UseFunc) error {
 	return pc.withChannel(timeout, func(ch *ProducerChan) error {
 		return uf(ch.ch)
 	})
 }
 
-func WithDefaultUse(uf UseFunc) error {
-	return WithUse(defaultTimeout, uf)
+func (pc *ProducerClient) WithDefaultUse(uf UseFunc) error {
+	return pc.WithUse(defaultTimeout, uf)
 }
 
-func WithConfirm(msgId string, timeout time.Duration, cf ConfirmFunc) error {
-	pc := MustGetProducerClient()
+func (pc *ProducerClient) WithConfirm(msgId string, timeout time.Duration, cf ConfirmFunc) error {
 
 	return pc.withChannel(timeout, func(ch *ProducerChan) error {
 		mid := handleForConfirm(msgId, pc, ch)
@@ -837,9 +818,7 @@ func WithConfirm(msgId string, timeout time.Duration, cf ConfirmFunc) error {
 	})
 }
 
-func WithConfirmDefault(msgId string, cf ConfirmFunc) error {
-	pc := MustGetProducerClient()
-
+func (pc *ProducerClient) WithConfirmDefault(msgId string, cf ConfirmFunc) error {
 	return pc.withChannel(defaultTimeout, func(ch *ProducerChan) error {
 		mid := handleForConfirm(msgId, pc, ch)
 
@@ -848,9 +827,7 @@ func WithConfirmDefault(msgId string, cf ConfirmFunc) error {
 }
 
 // don't care msgId
-func JustConfirm(cf ConfirmFunc) error {
-	pc := MustGetProducerClient()
-
+func (pc *ProducerClient) JustConfirm(cf ConfirmFunc) error {
 	return pc.withChannel(defaultTimeout, func(ch *ProducerChan) error {
 		mid := handleForConfirm("", pc, ch)
 

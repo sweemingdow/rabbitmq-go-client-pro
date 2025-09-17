@@ -60,60 +60,41 @@ type consumerChan struct {
 	willExitCh chan struct{}
 }
 
-var (
-	once    sync.Once
-	initErr error
-	cCli    *ConsumerClient
-)
-
-func MustGetConsumerClient() *ConsumerClient {
-	if cCli == nil {
-		rm_log.Fatal("consumer client is nil")
-	}
-
-	return cCli
-}
-
 // a hook to declare rabbitmq components after init success
 type DeclareHook func(tempCh *amqp091.Channel) error
 
 func NewConsumerClient(cfg rm_cfg.RabbitmqCfg, dh DeclareHook) (*ConsumerClient, error) {
-	once.Do(func() {
-		if cfg.ConsumerCfg.MaxConnections <= 0 {
-			cfg.ConsumerCfg.MaxConnections = 1
+	if cfg.ConsumerCfg.MaxConnections <= 0 {
+		cfg.ConsumerCfg.MaxConnections = 1
+	}
+
+	cc := &ConsumerClient{
+		cfg:  cfg,
+		done: make(chan struct{}),
+	}
+
+	conns, err := cc.mustInitConns()
+	if err != nil {
+		return nil, err
+	}
+
+	cc.conns = conns
+
+	if rm_log.CanDebug() {
+		rm_log.Debug("rabbitmq consumer client init successfully")
+	}
+
+	rm_log.SetLoggerLevelHuman(cfg.LogLevel)
+
+	if dh != nil {
+		if err = cc.WithTempCh(func(ch *amqp091.Channel) error {
+			return dh(ch)
+		}); err != nil {
+			return nil, err
 		}
+	}
 
-		cc := &ConsumerClient{
-			cfg:  cfg,
-			done: make(chan struct{}),
-		}
-
-		conns, err := cc.mustInitConns()
-		if err != nil {
-			initErr = err
-		}
-
-		cc.conns = conns
-
-		if rm_log.CanDebug() {
-			rm_log.Debug("rabbitmq consumer client init successfully")
-		}
-
-		rm_log.SetLoggerLevelHuman(cfg.LogLevel)
-
-		cCli = cc
-
-		if dh != nil {
-			if err = cc.WithTempCh(func(ch *amqp091.Channel) error {
-				return dh(ch)
-			}); err != nil {
-				initErr = err
-				return
-			}
-		}
-	})
-
-	return cCli, initErr
+	return cc, nil
 }
 
 func (cc *ConsumerClient) mustInitConns() ([]*consumerConn, error) {

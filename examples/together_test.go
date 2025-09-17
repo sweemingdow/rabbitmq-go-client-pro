@@ -20,8 +20,8 @@ import (
 var cfgExample = `
 addresses: 192.168.10.100:5672 # if cluster, eg: 192.168.10.10:5672,192.168.11.100:5672,192.168.12.100:5672
 virtual-host: '/'
-username: {your-username}
-password: {your-pwd}
+username: mgr
+password: mgr123
 log-level: debug
 producer-cfg:
   conn-retry-delay-mills: 10    
@@ -206,7 +206,7 @@ func TestUseTogether(t *testing.T) {
 		defer wg.Done()
 
 		for i := 0; i < sendCnt; i++ {
-			err := rm_producer.JustConfirm(
+			err := pCli.JustConfirm(
 				func(msgId string, ch *amqp091.Channel) error {
 					return ch.Publish(
 						"direct.test.event",
