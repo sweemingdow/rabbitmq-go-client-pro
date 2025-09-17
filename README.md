@@ -82,7 +82,7 @@ if err != nil {
 cli, err := NewProducerClient(cfg)
 
 // with default 4 seconds timeout
-err := WithDefaultUse(
+err := cli.WithDefaultUse(
     func(ch *amqp091.Channel) error {
         // be transparent to callers
         return ch.Publish(
@@ -103,7 +103,7 @@ if err != nil {
 
 
 // or customize the timeout
-err = WithUse(
+err = cli.WithUse(
     1*time.Second,
     func(ch *amqp091.Channel) error {
         // be transparent to callers
@@ -136,7 +136,7 @@ for i := 0; i < 2; i++ {
         The caller specifies the msgId and timeout period.
         The msgId will be passed in confirmCallback.
     */
-    err = WithConfirm(
+    err = cli.WithConfirm(
         uuid.New().String(),
         8*time.Second,
         func(msgId string, ch *amqp091.Channel) error {
@@ -159,7 +159,7 @@ if err != nil {
 }
 
 // with default 4 seconds timeout
-err = WithConfirmDefault(
+err = cli.WithConfirmDefault(
     uuid.New().String(),
     func(msgId string, ch *amqp091.Channel) error {
         return ch.Publish(
@@ -181,7 +181,7 @@ if err != nil {
 }
 
 // don't care detail, just confirm
-err = JustConfirm(
+err = cli.JustConfirm(
     // default generate msgId in JustConfirm
     func(msgId string, ch *amqp091.Channel) error {
         return ch.Publish(
@@ -277,7 +277,7 @@ func TestConsumerBaseUse(t *testing.T) {
 	// may have more messages received after main goroutine exit, until graceful shutdown
 	var receivedCnt atomic.Uint32
 
-	err := cc.StartConsumer(rmCfg.ConsumerCfg.ConsumeApplyCfgItems[0], func(delivery amqp091.Delivery) {
+	err := cli.StartConsumer(rmCfg.ConsumerCfg.ConsumeApplyCfgItems[0], func(delivery amqp091.Delivery) {
 		defer delivery.Ack(false)
 
 		log.Printf("consume msg, msgId:%s, body:%s\n", delivery.MessageId, string(delivery.Body))
