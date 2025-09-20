@@ -192,13 +192,9 @@ func (cn *producerConn) markSuspend(amqpErr *amqp091.Error, dur time.Duration) {
 }
 
 func (cn *producerConn) markUnsuspend() {
-	cn.chMu.Lock()
-
 	cn.lastErr.Store(nil)
 	cn.errTime.Store(nil)
 	cn.suspendDeadline.Store(nil)
-
-	cn.chMu.Unlock()
 }
 
 func (cn *producerConn) tryEvict(dur time.Duration) {
@@ -207,15 +203,13 @@ func (cn *producerConn) tryEvict(dur time.Duration) {
 	recTime := time.NewTimer(dur)
 	defer recTime.Stop()
 
-	for {
-		select {
-		case <-cn.pc.done:
-			return
-		case <-recTime.C:
-			rm_log.Info(fmt.Sprintf("conn:%s start evict invalid channels", cn.id))
+	select {
+	case <-cn.pc.done:
+		return
+	case <-recTime.C:
+		rm_log.Info(fmt.Sprintf("conn:%s start evict invalid channels", cn.id))
 
-			cn.cleanAndRefillPool()
-		}
+		cn.cleanAndRefillPool()
 	}
 }
 
@@ -227,9 +221,15 @@ func (cn *producerConn) cleanAndRefillPool() {
 		return
 	}
 
+	if !cn.isSuspend() {
+		return
+	}
+
 	cleaned := 0
 	for {
 		select {
+		case <-cn.pc.done:
+			return
 		case ch := <-cn.chPool:
 			if !ch.valid() {
 				_ = ch.close()
@@ -242,7 +242,7 @@ func (cn *producerConn) cleanAndRefillPool() {
 				}
 			}
 		default:
-			// 池已空，跳出循环
+			// chPool was empty
 			goto refill
 		}
 	}

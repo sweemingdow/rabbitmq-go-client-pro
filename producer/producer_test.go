@@ -13,6 +13,7 @@ import (
 	"math/rand"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -26,8 +27,8 @@ log-level: trace
 producer-cfg:
   conn-retry-delay-mills: 10    
   recover-mills-after-suspend: 8000
-  max-connections: 1             
-  max-channels-per-conn: 1      
+  max-connections: 2            
+  max-channels-per-conn: 5      
   enable-stats: true # start statistic           
   enable-mandatory: true
   enable-confirm: true
@@ -445,8 +446,6 @@ func TestOneConnOneChInvalid(t *testing.T) {
 
 	log.Println("publish msg1 success")
 
-	time.Sleep(2 * time.Second)
-
 	err = pc.WithConfirmDefault(
 		uuid.New().String(),
 		func(msgId string, ch *amqp091.Channel) error {
@@ -470,7 +469,7 @@ func TestOneConnOneChInvalid(t *testing.T) {
 
 	log.Println("publish msg2 success")
 
-	time.Sleep(15 * time.Second)
+	time.Sleep(10 * time.Second)
 
 	err = pc.WithConfirmDefault(
 		uuid.New().String(),
@@ -495,4 +494,107 @@ func TestOneConnOneChInvalid(t *testing.T) {
 
 	log.Println("publish msg3 success")
 
+	time.Sleep(1 * time.Second)
+
+	err = pc.WithConfirmDefault(
+		uuid.New().String(),
+		func(msgId string, ch *amqp091.Channel) error {
+			return ch.Publish(
+				"direct.test.even", // correct: direct.test.event
+				"test.event",
+				true,
+				false,
+				amqp091.Publishing{
+					ContentType: "application/json",
+					Body:        []byte(`{"name":"swim","desc":"swimming dog1111"}`),
+					MessageId:   msgId,
+				},
+			)
+		},
+	)
+
+	if err != nil {
+		log.Printf("publish msg4 err:%v\n", err)
+	}
+
+	log.Println("publish msg4 success")
+
+	time.Sleep(10 * time.Second)
+
+	err = pc.WithConfirmDefault(
+		uuid.New().String(),
+		func(msgId string, ch *amqp091.Channel) error {
+			return ch.Publish(
+				"direct.test.event",
+				"test.event",
+				true,
+				false,
+				amqp091.Publishing{
+					ContentType: "application/json",
+					Body:        []byte(`{"name":"swim","desc":"swimming dog11111"}`),
+					MessageId:   msgId,
+				},
+			)
+		},
+	)
+
+	if err != nil {
+		log.Printf("publish msg5 err:%v\n", err)
+	}
+
+	log.Println("publish msg5 success")
+
+}
+
+func TestProducerUnRecoverMistake(t *testing.T) {
+	var (
+		sendMsgCnt      = 50
+		sendConcurrency = 5
+		incorrectCnt    atomic.Uint32
+		successCnt      atomic.Uint32
+	)
+
+	var grp errgroup.Group
+	grp.SetLimit(sendConcurrency)
+	for i := 0; i < sendMsgCnt; i++ {
+		grp.Go(func() error {
+			time.Sleep(time.Duration(rand.Intn(10)+3) * time.Second)
+
+			e := pc.WithUse(
+				4*time.Second,
+				func(ch *amqp091.Channel) error {
+					var exchange string
+					if rand.Intn(10) < 1 {
+						if incorrectCnt.Add(1) <= 2 {
+							exchange = "direct.test.even"
+						} else {
+							exchange = "direct.test.event"
+						}
+					} else {
+						exchange = "direct.test.event"
+					}
+					return ch.Publish(
+						exchange, // correct: direct.test.event
+						"test.event",
+						false,
+						false,
+						amqp091.Publishing{
+							ContentType: "application/json",
+							Body:        []byte(`{"name":"swim","desc":"swimming dog"}`), // simple msg body
+						})
+				},
+			)
+
+			if e == nil {
+				successCnt.Add(1)
+			} else {
+				log.Printf("publish failed:%v\n", e)
+			}
+
+			return nil
+		})
+	}
+	_ = grp.Wait()
+
+	fmt.Printf("publish completed, successCnt:%d\n", successCnt.Load())
 }
