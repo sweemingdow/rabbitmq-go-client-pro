@@ -1,13 +1,14 @@
 package rm_cfg
 
 type RabbitmqProducerCfg struct {
-	ConnRetryDelayMills int  `yaml:"conn-retry-delay-mills"` // auto reconnect delay in first retry
-	MaxConnections      int  `yaml:"max-connections"`        // in 99% of cases, only considering 1 or 2, fewer connections, multiple channels, and IO multiplexing are the right choices.
-	MaxChannelsPerConn  int  `yaml:"max-channels-per-conn"`
-	EnableStats         bool `yaml:"enable-stats"` // enable pool statistics
-	EnableConfirm       bool `yaml:"enable-confirm"`
-	ConfirmQueueCap     int  `yaml:"confirm-queue-cap"` // default 100
-	EnableMandatory     bool `yaml:"enable-mandatory"`
+	ConnRetryDelayMills      int  `yaml:"conn-retry-delay-mills"` // auto reconnect delay in first retry
+	MaxConnections           int  `yaml:"max-connections"`        // in 99% of cases, only considering 1 or 2, fewer connections, multiple channels, and IO multiplexing are the right choices.
+	MaxChannelsPerConn       int  `yaml:"max-channels-per-conn"`
+	RecoverMillsAfterSuspend int  `yaml:"recover-mills-after-suspend"`
+	EnableStats              bool `yaml:"enable-stats"` // enable pool statistics
+	EnableConfirm            bool `yaml:"enable-confirm"`
+	ConfirmQueueCap          int  `yaml:"confirm-queue-cap"` // default 100
+	EnableMandatory          bool `yaml:"enable-mandatory"`
 }
 
 type ConsumeApplyCfgItem struct {

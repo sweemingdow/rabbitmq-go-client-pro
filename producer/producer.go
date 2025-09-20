@@ -25,6 +25,8 @@ const (
 var (
 	ProducerCliAlreadyClosed = errors.New("producer client was closed")
 	ProducerConnInvalidErr   = errors.New("producer connection was invalid")
+	ProducerConnSuspendErr   = errors.New("producer connection was suspend")
+	ProducerChInvalidErr     = errors.New("producer channel was invalid")
 	ProducerChWasCleaned     = errors.New("producer channel was cleaned")
 	AcquireChannelTimeoutErr = errors.New("acquire producer channel timeout")
 )
@@ -47,6 +49,10 @@ type producerConn struct {
 	chIncr  atomic.Uint32
 	trying  atomic.Bool
 	pc      *ProducerClient
+
+	lastErr         atomic.Pointer[amqp091.Error]
+	errTime         atomic.Pointer[time.Time]
+	suspendDeadline atomic.Pointer[time.Time]
 }
 
 type ProducerChan struct {
@@ -159,6 +165,118 @@ func (pc *ProducerClient) mustInitConns() (conns []*producerConn, err error) {
 	}
 
 	return conns, err
+}
+
+func (cn *producerConn) isSuspend() bool {
+	if sdl := cn.suspendDeadline.Load(); sdl != nil {
+		return time.Now().Before(*sdl)
+	}
+
+	return false
+}
+
+func (cn *producerConn) markSuspend(amqpErr *amqp091.Error, dur time.Duration) {
+	now := time.Now()
+
+	cn.chMu.Lock()
+
+	cn.lastErr.Store(amqpErr)
+	cn.errTime.Store(&now)
+	deadline := now.Add(dur)
+	cn.suspendDeadline.Store(&deadline)
+
+	cn.chMu.Unlock()
+
+	// evict invalid channels after dur
+	go cn.tryEvict(dur)
+}
+
+func (cn *producerConn) markUnsuspend() {
+	cn.chMu.Lock()
+
+	cn.lastErr.Store(nil)
+	cn.errTime.Store(nil)
+	cn.suspendDeadline.Store(nil)
+
+	cn.chMu.Unlock()
+}
+
+func (cn *producerConn) tryEvict(dur time.Duration) {
+	rm_log.Warn(fmt.Sprintf("conn:%s will be evict invalid channels after %v sec later", cn.id, dur.Seconds()))
+
+	recTime := time.NewTimer(dur)
+	defer recTime.Stop()
+
+	for {
+		select {
+		case <-cn.pc.done:
+			return
+		case <-recTime.C:
+			rm_log.Info(fmt.Sprintf("conn:%s start evict invalid channels", cn.id))
+
+			cn.cleanAndRefillPool()
+		}
+	}
+}
+
+func (cn *producerConn) cleanAndRefillPool() {
+	cn.chMu.Lock()
+	defer cn.chMu.Unlock()
+
+	if cn.isDirty() {
+		return
+	}
+
+	cleaned := 0
+	for {
+		select {
+		case ch := <-cn.chPool:
+			if !ch.valid() {
+				_ = ch.close()
+				cleaned++
+			} else {
+				select {
+				case cn.chPool <- ch:
+				default:
+					_ = ch.close()
+				}
+			}
+		default:
+			// 池已空，跳出循环
+			goto refill
+		}
+	}
+
+refill:
+	if cleaned > 0 {
+		rm_log.Warn(fmt.Sprintf("conn:%s, had %d invalid channels should be evict", cn.id, cleaned))
+	}
+
+	targetCount := cn.pc.cfg.ProducerCfg.MaxChannelsPerConn
+	currentCount := len(cn.chPool)
+
+	var recErr error
+	for i := 0; i < targetCount-currentCount; i++ {
+		newCh, err := cn.createProducerChan()
+		if err != nil {
+			rm_log.Error(fmt.Sprintf("create channel failed when conn:%s evict invalid channels, err:%v", cn.id, err))
+			recErr = err
+			break
+		}
+
+		select {
+		case cn.chPool <- newCh:
+			go newCh.listenEvent()
+		default:
+			_ = newCh.close()
+		}
+	}
+
+	cn.markUnsuspend()
+
+	if recErr == nil {
+		rm_log.Info(fmt.Sprintf("conn:%s evict invalid channels successfully", cn.id))
+	}
 }
 
 func (cn *producerConn) listenEvent() {
@@ -296,6 +414,16 @@ func (ch *ProducerChan) listenEvent() {
 
 				// 320: forced closed
 				if closeErr.Code == amqp091.ConnectionForced {
+					return
+				}
+
+				// Unrecoverable error, suspend the entire connection until automatic recovery is attempted after configuring: "RecoverMillsAfterSuspend"
+				if isUnrecoverableError(closeErr) {
+					mills := cn.pc.cfg.ProducerCfg.RecoverMillsAfterSuspend
+					if mills <= 0 {
+						mills = 10 * 1000
+					}
+					cn.markSuspend(closeErr, time.Duration(mills)*time.Millisecond)
 					return
 				}
 
@@ -597,6 +725,14 @@ func (cn *producerConn) acquireChan(timeout time.Duration) (*ProducerChan, error
 		return nil, ProducerConnInvalidErr
 	}
 
+	if cn.isSuspend() {
+		if rm_log.CanTrace() {
+			rm_log.Trace(fmt.Sprintf("acquire channel, but conn:%s was suspend, cause:%v", cn.id, cn.lastErr.Load()))
+		}
+
+		return nil, ProducerConnSuspendErr
+	}
+
 	timer := cn.pc.timerPool.Get(timeout)
 	defer cn.pc.timerPool.Put(timer)
 
@@ -618,6 +754,13 @@ func (cn *producerConn) acquireChan(timeout time.Duration) (*ProducerChan, error
 
 			if cn.isDirty() {
 				return nil, ProducerConnInvalidErr
+			}
+
+			// Return it to the next caller
+			select {
+			case cn.chPool <- ch:
+			default:
+
 			}
 		}
 	}
@@ -755,6 +898,15 @@ func recreateProducerConn(oldIdx int, pc *ProducerClient) (*producerConn, error)
 	conn := pc.createProducerConn(oldIdx, floorConn)
 
 	return conn, conn.createChildChannels()
+}
+
+func isUnrecoverableError(amqpErr *amqp091.Error) bool {
+	switch amqpErr.Code {
+	case amqp091.NotFound, amqp091.AccessRefused, amqp091.PreconditionFailed, amqp091.FrameError, amqp091.SyntaxError:
+		return true
+	}
+
+	return false
 }
 
 const (

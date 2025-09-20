@@ -20,13 +20,14 @@ import (
 var cfgExample = `
 addresses: 192.168.10.100:5672 # if cluster, eg: 192.168.10.100:5672,192.168.11.100:5672,192.168.12.100:5672
 virtual-host: '/'
-username: {your-username}
-password: {your-pwd}
+username: mgr
+password: mgr123
 log-level: trace
 producer-cfg:
   conn-retry-delay-mills: 10    
-  max-connections: 2             
-  max-channels-per-conn: 80      
+  recover-mills-after-suspend: 8000
+  max-connections: 1             
+  max-channels-per-conn: 1      
   enable-stats: true # start statistic           
   enable-mandatory: true
   enable-confirm: true
@@ -410,4 +411,88 @@ func TestProducerConfirmModeConcurrencyPublish(t *testing.T) {
 	wg.Wait()
 
 	log.Printf("all confirm done, exit now!\n")
+}
+
+func TestOneConnOneChInvalid(t *testing.T) {
+	SetConfirmCallback(func(msgId string, deliverTag uint64, isAck bool) {
+		log.Printf("confirm callback, msgId:%s, deliverTag:%d, isAck:%t\n", msgId, deliverTag, isAck)
+	})
+
+	SetReturnCallback(func(ret amqp091.Return) {
+		log.Printf("ret:%v had be returned\n", ret)
+	})
+
+	err := pc.WithConfirmDefault(
+		uuid.New().String(),
+		func(msgId string, ch *amqp091.Channel) error {
+			return ch.Publish(
+				"direct.test.event",
+				"test.event",
+				true,
+				false,
+				amqp091.Publishing{
+					ContentType: "application/json",
+					Body:        []byte(`{"name":"swim","desc":"swimming dog1"}`),
+					MessageId:   msgId,
+				},
+			)
+		},
+	)
+
+	if err != nil {
+		log.Printf("publish msg1 err:%v\n", err)
+	}
+
+	log.Println("publish msg1 success")
+
+	time.Sleep(2 * time.Second)
+
+	err = pc.WithConfirmDefault(
+		uuid.New().String(),
+		func(msgId string, ch *amqp091.Channel) error {
+			return ch.Publish(
+				"direct.test.even", // correct: direct.test.event
+				"test.event",
+				true,
+				false,
+				amqp091.Publishing{
+					ContentType: "application/json",
+					Body:        []byte(`{"name":"swim","desc":"swimming dog11"}`),
+					MessageId:   msgId,
+				},
+			)
+		},
+	)
+
+	if err != nil {
+		log.Printf("publish msg2 err:%v\n", err)
+	}
+
+	log.Println("publish msg2 success")
+
+	time.Sleep(15 * time.Second)
+
+	err = pc.WithConfirmDefault(
+		uuid.New().String(),
+		func(msgId string, ch *amqp091.Channel) error {
+			return ch.Publish(
+				"direct.test.event",
+				"test.event",
+				true,
+				false,
+				amqp091.Publishing{
+					ContentType: "application/json",
+					Body:        []byte(`{"name":"swim","desc":"swimming dog111"}`),
+					MessageId:   msgId,
+				},
+			)
+		},
+	)
+
+	if err != nil {
+		log.Printf("publish msg3 err:%v\n", err)
+	}
+
+	log.Println("publish msg3 success")
+
 }
