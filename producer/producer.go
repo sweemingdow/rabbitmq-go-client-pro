@@ -53,6 +53,8 @@ type producerConn struct {
 	lastErr         atomic.Pointer[amqp091.Error]
 	errTime         atomic.Pointer[time.Time]
 	suspendDeadline atomic.Pointer[time.Time]
+
+	unSuspending atomic.Bool
 }
 
 type ProducerChan struct {
@@ -221,9 +223,10 @@ func (cn *producerConn) cleanAndRefillPool() {
 		return
 	}
 
-	if !cn.isSuspend() {
-		return
+	for cn.unSuspending.CompareAndSwap(false, true) {
+		runtime.Gosched()
 	}
+	defer cn.unSuspending.Store(false)
 
 	cleaned := 0
 	for {
